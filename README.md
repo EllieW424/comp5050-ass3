@@ -2,8 +2,21 @@
 
 ## Run
 
-Requires JDK 11. Place course starter files, GPS data and dependency jars in `provided`. No runnable application yet.
+Requires JDK 11. Set paths to the course files and local jars:
+
+```bash
+export PROVIDED_DIR=/path/to/provided
+export SODIUM_JAR=/path/to/sodium.jar
+export SWIDGET_JAR=/path/to/swidget.jar
+export JUNIT_JAR=/path/to/junit.jar
+export HAMCREST_JAR=/path/to/hamcrest-core.jar
+./scripts/compile.sh
+./scripts/test.sh
+./scripts/run.sh
+```
+
+`run.sh` currently launches the course `Example`; select a compiled entry point with `MAIN_CLASS=...`.
 
 ## Done
 
-Initialized Git, project folders and `../../Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_1wvepopmx71612_853a/msg/file/2026-10/commit1/.gitignore`.
+Added validated GPS domain models and JUnit model tests.
