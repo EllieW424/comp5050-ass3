@@ -19,4 +19,4 @@ export HAMCREST_JAR=/path/to/hamcrest-core.jar
 
 ## Done
 
-Added validated GPS domain models and JUnit model tests.
+Added validated GPS models, JUnit tests, and a timestamped adapter that merges all course GPS streams.
