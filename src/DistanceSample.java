@@ -20,18 +20,30 @@ public final class DistanceSample {
 
     public static DistanceSample from(GpsEvent event, long receivedAtNanos) {
         Objects.requireNonNull(event, "event");
-        String tracker = GpsValidation.requireTrackerName(event.name);
-        GpsValidation.requireCoordinates(event.latitude, event.longitude);
-        if (!Double.isFinite(event.altitude)) {
+        return create(event.name, event.latitude, event.longitude,
+                event.altitude, receivedAtNanos);
+    }
+
+    public static DistanceSample from(ReceivedGpsEvent event) {
+        Objects.requireNonNull(event, "event");
+        return create(event.getTracker(), event.getLatitude(), event.getLongitude(),
+                event.getAltitudeFeet(), event.getReceivedAtNanos());
+    }
+
+    private static DistanceSample create(String tracker, double latitude, double longitude,
+                                         double altitudeFeet, long receivedAtNanos) {
+        GpsValidation.requireTrackerName(tracker);
+        GpsValidation.requireCoordinates(latitude, longitude);
+        if (!Double.isFinite(altitudeFeet)) {
             throw new IllegalArgumentException("Altitude in feet must be finite");
         }
 
-        double altitudeMeters = event.altitude * METERS_PER_FOOT;
+        double altitudeMeters = altitudeFeet * METERS_PER_FOOT;
         if (!Double.isFinite(altitudeMeters)) {
             throw new IllegalArgumentException("Converted altitude in meters must be finite");
         }
-        return new DistanceSample(tracker, event.latitude, event.longitude,
-                altitudeMeters, receivedAtNanos);
+        return new DistanceSample(tracker, latitude, longitude, altitudeMeters,
+                receivedAtNanos);
     }
 
     public String getTracker() {

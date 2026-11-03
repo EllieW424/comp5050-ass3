@@ -33,6 +33,10 @@ public final class SimplifiedGpsStreams {
     }
 
     public List<String> getTrackerNames() {
+        return trackerNames();
+    }
+
+    public static List<String> trackerNames() {
         return TRACKER_NAMES;
     }
 
