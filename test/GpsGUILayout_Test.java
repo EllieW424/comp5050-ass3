@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
@@ -76,6 +77,46 @@ public class GpsGUILayout_Test {
         assertEquals("-12.3456789", trackerTable.getValueAt(6, 1));
         assertEquals("-77.2500001", trackerTable.getValueAt(6, 2));
         assertEquals("-", trackerTable.getValueAt(5, 1));
+    }
+
+    @Test
+    public void filterButtonsUpdateRangeLabelsAndShowRecoverableValidationErrors()
+            throws Exception {
+        StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
+        JPanel content = createOnEventThread(new SimplifiedGpsStreams(events));
+        STextField minimumLatitude = (STextField) findByName(content,
+                "latitude-minimum-input");
+        STextField maximumLatitude = (STextField) findByName(content,
+                "latitude-maximum-input");
+        SButton setLatitude = (SButton) findByName(content, "set-latitude-bounds");
+        JLabel currentLatitude = (JLabel) findByName(content, "latitude-current-range");
+        JLabel latitudeError = (JLabel) findByName(content, "latitude-filter-error");
+
+        SwingUtilities.invokeAndWait(() -> {
+            minimumLatitude.setText("10");
+            maximumLatitude.setText("20");
+        });
+        SwingUtilities.invokeAndWait(() -> { });
+        SwingUtilities.invokeAndWait(setLatitude::doClick);
+        SwingUtilities.invokeAndWait(() -> { });
+
+        assertEquals("Latitude range: 10.0 to 20.0", currentLatitude.getText());
+        assertEquals("", latitudeError.getText().trim());
+        assertEquals("Between -90 and 90", minimumLatitude.getAccessibleContext()
+                .getAccessibleDescription());
+
+        SwingUtilities.invokeAndWait(() -> {
+            minimumLatitude.setText("30");
+            maximumLatitude.setText("20");
+        });
+        SwingUtilities.invokeAndWait(() -> { });
+        SwingUtilities.invokeAndWait(setLatitude::doClick);
+        SwingUtilities.invokeAndWait(() -> { });
+
+        assertEquals("Latitude range: 10.0 to 20.0", currentLatitude.getText());
+        assertTrue(latitudeError.getText().contains("Min no greater than Max"));
+        assertEquals(latitudeError.getText(), minimumLatitude.getAccessibleContext()
+                .getAccessibleDescription());
     }
 
     @Test

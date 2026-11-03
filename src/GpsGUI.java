@@ -28,6 +28,7 @@ import javax.swing.table.DefaultTableModel;
 import nz.sodium.Cell;
 import nz.sodium.Listener;
 import nz.sodium.Operational;
+import nz.sodium.Stream;
 import nz.sodium.StreamSink;
 import swidgets.SButton;
 import swidgets.STextArea;
@@ -44,15 +45,17 @@ public final class GpsGUI {
     private static final Color TABLE_HEADER = new Color(232, 239, 235);
 
     private final SimplifiedGpsStreams positions;
+    private final Stream<ReceivedGpsEvent> events;
     private final StreamSink<Long> timeoutTicks;
     private final LatestEventModel latestEvents;
     private final List<Listener> listeners = new ArrayList<>();
     private Timer latestEventTimer;
 
     private GpsGUI(GpsServiceAdapter adapter) {
-        this.positions = new SimplifiedGpsStreams(adapter.events());
+        this.events = adapter.events();
+        this.positions = new SimplifiedGpsStreams(events);
         this.timeoutTicks = new StreamSink<>();
-        this.latestEvents = new LatestEventModel(adapter.events(), timeoutTicks);
+        this.latestEvents = new LatestEventModel(events, timeoutTicks);
         listeners.add(latestEvents.timeoutRequests().listen(this::restartLatestEventTimer));
         latestEvents.currentTimeout().sample()
                 .ifPresent(this::restartLatestEventTimer);
@@ -64,14 +67,16 @@ public final class GpsGUI {
     }
 
     static JPanel createContent(SimplifiedGpsStreams positions) {
-        return createContent(positions, new Cell<>(Optional.empty()), new ArrayList<>());
+        return createContent(positions, new Stream<>(), new Cell<>(Optional.empty()),
+                new ArrayList<>());
     }
 
     private JPanel createDashboard() {
-        return createContent(positions, latestEvents.latestEvent(), listeners);
+        return createContent(positions, events, latestEvents.latestEvent(), listeners);
     }
 
     private static JPanel createContent(SimplifiedGpsStreams positions,
+                                        Stream<ReceivedGpsEvent> events,
                                         Cell<Optional<String>> latestEvent,
                                         List<Listener> listeners) {
         JPanel shell = new JPanel(new BorderLayout(0, 14));
@@ -95,7 +100,7 @@ public final class GpsGUI {
         constraints.gridx = 1;
         constraints.weightx = 0.4;
         constraints.insets = new Insets(0, 0, 12, 0);
-        dashboard.add(createFilterSection(), constraints);
+        dashboard.add(createFilterSection(events, listeners), constraints);
 
         constraints.gridx = 0;
         constraints.gridy = 1;
@@ -178,32 +183,115 @@ public final class GpsGUI {
         return section;
     }
 
-    private static JPanel createFilterSection() {
+    private static JPanel createFilterSection(Stream<ReceivedGpsEvent> events,
+                                              List<Listener> listeners) {
         JPanel section = createSection("Latitude/Longitude Filter", "filter-section");
         JPanel form = new JPanel(new GridBagLayout());
         form.setOpaque(false);
 
-        addFilterRow(form, 0, "Latitude", "latitude", "-90 to 90");
-        addFilterRow(form, 2, "Longitude", "longitude", "-180 to 180");
+        STextField minimumLatitude = createFilterInput("latitude-minimum-input",
+                "Minimum latitude", "Between -90 and 90");
+        STextField maximumLatitude = createFilterInput("latitude-maximum-input",
+                "Maximum latitude", "Between -90 and 90");
+        STextField minimumLongitude = createFilterInput("longitude-minimum-input",
+                "Minimum longitude", "Between -180 and 180");
+        STextField maximumLongitude = createFilterInput("longitude-maximum-input",
+                "Maximum longitude", "Between -180 and 180");
+        SButton setLatitude = createBoundsButton("latitude");
+        SButton setLongitude = createBoundsButton("longitude");
+
+        Stream<GpsFilterModel.Submission> latitudeSubmissions = setLatitude.sClicked
+                .snapshot(minimumLatitude.text, maximumLatitude.text,
+                        (clicked, minimum, maximum) -> new GpsFilterModel.Submission(
+                                GpsFilterModel.Axis.LATITUDE, minimum, maximum));
+        Stream<GpsFilterModel.Submission> longitudeSubmissions = setLongitude.sClicked
+                .snapshot(minimumLongitude.text, maximumLongitude.text,
+                        (clicked, minimum, maximum) -> new GpsFilterModel.Submission(
+                                GpsFilterModel.Axis.LONGITUDE, minimum, maximum));
+        GpsFilterModel model = new GpsFilterModel(events,
+                latitudeSubmissions.orElse(longitudeSubmissions));
+
+        JLabel latitudeCurrent = createRangeLabel("latitude-current-range", "Latitude");
+        JLabel longitudeCurrent = createRangeLabel("longitude-current-range", "Longitude");
+        JLabel latitudeError = createErrorLabel("latitude-filter-error");
+        JLabel longitudeError = createErrorLabel("longitude-filter-error");
+
+        addFilterRow(form, 0, "Latitude", minimumLatitude, maximumLatitude, setLatitude,
+                latitudeCurrent, latitudeError);
+        addFilterRow(form, 3, "Longitude", minimumLongitude, maximumLongitude, setLongitude,
+                longitudeCurrent, longitudeError);
+
+        listeners.add(Operational.updates(model.bounds()).listen(bounds ->
+                SwingUtilities.invokeLater(() -> {
+                    latitudeCurrent.setText(formatRange("Latitude",
+                            bounds.getLatitudeRange()));
+                    longitudeCurrent.setText(formatRange("Longitude",
+                            bounds.getLongitudeRange()));
+                })));
+        listeners.add(Operational.updates(model.error(GpsFilterModel.Axis.LATITUDE)).listen(error ->
+                SwingUtilities.invokeLater(() -> {
+                    latitudeError.setText(error.isEmpty() ? " " : error);
+                    String description = error.isEmpty()
+                            ? "Between -90 and 90" : error;
+                    minimumLatitude.getAccessibleContext().setAccessibleDescription(description);
+                    maximumLatitude.getAccessibleContext().setAccessibleDescription(description);
+                })));
+        listeners.add(Operational.updates(model.error(GpsFilterModel.Axis.LONGITUDE)).listen(error ->
+                SwingUtilities.invokeLater(() -> {
+                    longitudeError.setText(error.isEmpty() ? " " : error);
+                    String description = error.isEmpty()
+                            ? "Between -180 and 180" : error;
+                    minimumLongitude.getAccessibleContext().setAccessibleDescription(description);
+                    maximumLongitude.getAccessibleContext().setAccessibleDescription(description);
+                })));
+
         section.add(form, BorderLayout.CENTER);
         return section;
     }
 
-    private static void addFilterRow(JPanel form, int row, String axis, String id,
-                                     String initialRange) {
-        STextField minimum = new STextField("", 7);
-        minimum.setName(id + "-minimum-input");
-        minimum.getAccessibleContext().setAccessibleName("Minimum " + axis.toLowerCase());
+    private static STextField createFilterInput(String name, String accessibleName,
+                                               String description) {
+        STextField field = new STextField("", 7);
+        field.setName(name);
+        field.setToolTipText(description);
+        field.getAccessibleContext().setAccessibleName(accessibleName);
+        field.getAccessibleContext().setAccessibleDescription(description);
+        return field;
+    }
 
-        STextField maximum = new STextField("", 7);
-        maximum.setName(id + "-maximum-input");
-        maximum.getAccessibleContext().setAccessibleName("Maximum " + axis.toLowerCase());
+    private static SButton createBoundsButton(String id) {
+        String axis = id.toLowerCase();
+        SButton button = new SButton("Set");
+        button.setName("set-" + id + "-bounds");
+        button.setToolTipText("Apply " + axis + " limits; leave both blank to clear them");
+        button.getAccessibleContext().setAccessibleName("Set " + axis + " bounds");
+        return button;
+    }
 
-        SButton set = new SButton("Set", new Cell<>(false));
-        set.setName("set-" + id + "-bounds");
-        set.setToolTipText("Set " + axis.toLowerCase() + " bounds");
-        set.getAccessibleContext().setAccessibleName("Set " + axis.toLowerCase() + " bounds");
+    private static JLabel createRangeLabel(String name, String axis) {
+        JLabel label = new JLabel(formatRange(axis, Optional.empty()));
+        label.setName(name);
+        label.setForeground(MUTED);
+        label.setFont(label.getFont().deriveFont(12f));
+        return label;
+    }
 
+    private static JLabel createErrorLabel(String name) {
+        JLabel label = new JLabel(" ");
+        label.setName(name);
+        label.setForeground(new Color(153, 27, 27));
+        label.setFont(label.getFont().deriveFont(12f));
+        label.getAccessibleContext().setAccessibleName("Filter validation error");
+        return label;
+    }
+
+    private static String formatRange(String axis, Optional<Bounds.Range> range) {
+        return axis + " range: " + range.map(Bounds.Range::toString).orElse("unrestricted");
+    }
+
+    private static void addFilterRow(JPanel form, int row, String axis,
+                                     STextField minimum, STextField maximum,
+                                     SButton set, JLabel current, JLabel error) {
         JLabel axisLabel = new JLabel(axis);
         axisLabel.setForeground(TEXT);
         axisLabel.setFont(axisLabel.getFont().deriveFont(Font.BOLD, 13f));
@@ -223,10 +311,6 @@ public final class GpsGUI {
         addFormComponent(form, maximum, 4, row, 0.3);
         addFormComponent(form, set, 5, row, 0.0);
 
-        JLabel current = new JLabel("Current " + axis.toLowerCase() + " range: " + initialRange);
-        current.setName(id + "-current-range");
-        current.setForeground(MUTED);
-        current.setFont(current.getFont().deriveFont(12f));
         GridBagConstraints currentConstraints = new GridBagConstraints();
         currentConstraints.gridx = 1;
         currentConstraints.gridy = row + 1;
@@ -236,6 +320,16 @@ public final class GpsGUI {
         currentConstraints.weightx = 1.0;
         currentConstraints.insets = new Insets(0, 4, 9, 2);
         form.add(current, currentConstraints);
+
+        GridBagConstraints errorConstraints = new GridBagConstraints();
+        errorConstraints.gridx = 1;
+        errorConstraints.gridy = row + 2;
+        errorConstraints.gridwidth = 5;
+        errorConstraints.anchor = GridBagConstraints.WEST;
+        errorConstraints.fill = GridBagConstraints.HORIZONTAL;
+        errorConstraints.weightx = 1.0;
+        errorConstraints.insets = new Insets(0, 4, 8, 2);
+        form.add(error, errorConstraints);
     }
 
     private static void addFormComponent(JPanel form, java.awt.Component component,
