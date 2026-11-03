@@ -23,7 +23,6 @@ import javax.swing.WindowConstants;
 import javax.swing.border.TitledBorder;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
-import javax.swing.table.DefaultTableModel;
 
 import nz.sodium.Cell;
 import nz.sodium.Listener;
@@ -113,7 +112,9 @@ public final class GpsGUI {
         constraints.weightx = 0.4;
         constraints.weighty = 0.42;
         constraints.insets = new Insets(0, 0, 12, 0);
-        dashboard.add(createDistanceSection(), constraints);
+        TrackerDistanceStreams distances = new TrackerDistanceStreams(
+                filterSection.model.filteredEvents());
+        dashboard.add(createDistanceSection(distances), constraints);
 
         constraints.gridx = 0;
         constraints.gridy = 2;
@@ -395,23 +396,14 @@ public final class GpsGUI {
         }
     }
 
-    private static JPanel createDistanceSection() {
+    private static JPanel createDistanceSection(TrackerDistanceStreams distances) {
         JPanel section = createSection("Distance by Tracker", "distance-section");
-        Object[][] rows = new Object[SimplifiedGpsStreams.TRACKER_COUNT][2];
-        for (int row = 0; row < rows.length; row++) {
-            rows[row][0] = "Tracker" + row;
-            rows[row][1] = "-";
-        }
-        DefaultTableModel model = new DefaultTableModel(
-                rows, new Object[] { "Tracker", "Distance (m)" }) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-        JTable table = new JTable(model);
+        JTable table = new JTable(new DistanceTableModel(distances));
         table.setName("distance-table");
         table.getAccessibleContext().setAccessibleName("Distance by Tracker");
+        table.getAccessibleContext().setAccessibleDescription(
+                "Ten tracker rows with current filtered distance in meters. Rows show No data "
+                        + "before the tracker has a filtered GPS position.");
         styleTable(table);
         table.setRowHeight(29);
         table.setPreferredScrollableViewportSize(new Dimension(360, 319));
@@ -522,6 +514,62 @@ public final class GpsGUI {
                 return Double.toString(point.getLongitude());
             }
             throw new IndexOutOfBoundsException("Unknown tracker column: " + column);
+        }
+    }
+
+    private static final class DistanceTableModel extends AbstractTableModel {
+        private final List<String> trackers = SimplifiedGpsStreams.trackerNames();
+        private final List<Cell<Optional<Long>>> distances = new ArrayList<>(trackers.size());
+        private final List<Listener> listeners = new ArrayList<>();
+
+        private DistanceTableModel(TrackerDistanceStreams streams) {
+            for (int row = 0; row < trackers.size(); row++) {
+                Cell<Optional<Long>> distance = streams.getDistanceMeters(trackers.get(row));
+                distances.add(distance);
+                final int updatedRow = row;
+                listeners.add(Operational.updates(distance).listen(value ->
+                        SwingUtilities.invokeLater(
+                                () -> fireTableRowsUpdated(updatedRow, updatedRow))));
+            }
+        }
+
+        @Override
+        public int getRowCount() {
+            return trackers.size();
+        }
+
+        @Override
+        public int getColumnCount() {
+            return 2;
+        }
+
+        @Override
+        public String getColumnName(int column) {
+            switch (column) {
+                case 0:
+                    return "Tracker";
+                case 1:
+                    return "Distance (m)";
+                default:
+                    throw new IndexOutOfBoundsException("Unknown distance column: " + column);
+            }
+        }
+
+        @Override
+        public Object getValueAt(int row, int column) {
+            if (column == 0) {
+                return trackers.get(row);
+            }
+            if (column == 1) {
+                Optional<Long> distance = distances.get(row).sample();
+                return distance.isPresent() ? Long.toString(distance.get()) : "No data";
+            }
+            throw new IndexOutOfBoundsException("Unknown distance column: " + column);
+        }
+
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return false;
         }
     }
 }

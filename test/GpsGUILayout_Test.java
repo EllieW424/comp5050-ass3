@@ -80,6 +80,43 @@ public class GpsGUILayout_Test {
     }
 
     @Test
+    public void distanceTableTracksFilteredDistanceCellsForTheMatchingTracker()
+            throws Exception {
+        StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
+        JPanel content = createOnEventThread(new SimplifiedGpsStreams(events), events);
+        JTable distanceTable = (JTable) findByName(content, "distance-table");
+        STextField minimumLatitude = (STextField) findByName(content,
+                "latitude-minimum-input");
+        STextField maximumLatitude = (STextField) findByName(content,
+                "latitude-maximum-input");
+        SButton setLatitude = (SButton) findByName(content, "set-latitude-bounds");
+
+        assertEquals("Tracker", distanceTable.getColumnName(0));
+        assertEquals("Distance (m)", distanceTable.getColumnName(1));
+        assertEquals("Tracker7", distanceTable.getValueAt(7, 0));
+        assertEquals("No data", distanceTable.getValueAt(7, 1));
+
+        setLatitudeBounds(minimumLatitude, maximumLatitude, setLatitude, "10", "20");
+        sendEvent(events, "Tracker7", 25.0, 42.0, 1000.0);
+        assertEquals("No data", distanceTable.getValueAt(7, 1));
+
+        sendEvent(events, "Tracker7", 15.0, 42.0, 100.0);
+        assertEquals("0", distanceTable.getValueAt(7, 1));
+        assertEquals("No data", distanceTable.getValueAt(6, 1));
+
+        sendEvent(events, "Tracker7", 15.0, 42.0, 101.0);
+        assertEquals("1", distanceTable.getValueAt(7, 1));
+
+        for (int index = 0; index < 64; index++) {
+            events.send(ReceivedGpsEvent.from(
+                    new GpsEvent("Tracker7", 15.0, 42.0, 102.0 + index), 0L));
+        }
+        flushEventThread();
+        assertTrue(Long.parseLong(distanceTable.getValueAt(7, 1).toString()) > 1L);
+        assertEquals("No data", distanceTable.getValueAt(6, 1));
+    }
+
+    @Test
     public void filterButtonsUpdateRangeLabelsAndShowRecoverableValidationErrors()
             throws Exception {
         StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
@@ -186,8 +223,14 @@ public class GpsGUILayout_Test {
     private static void sendEvent(StreamSink<ReceivedGpsEvent> events, String tracker,
                                   double latitude, double longitude)
             throws InterruptedException, InvocationTargetException {
+        sendEvent(events, tracker, latitude, longitude, 100.0);
+    }
+
+    private static void sendEvent(StreamSink<ReceivedGpsEvent> events, String tracker,
+                                  double latitude, double longitude, double altitudeFeet)
+            throws InterruptedException, InvocationTargetException {
         events.send(ReceivedGpsEvent.from(
-                new GpsEvent(tracker, latitude, longitude, 100.0), 0L));
+                new GpsEvent(tracker, latitude, longitude, altitudeFeet), 0L));
         flushEventThread();
     }
 
