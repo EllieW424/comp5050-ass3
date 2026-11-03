@@ -24,7 +24,7 @@ done
 
 JAVA_BIN="${JAVA_HOME:+$JAVA_HOME/bin/java}"
 JAVA_BIN="${JAVA_BIN:-$(command -v java)}"
-MAIN_CLASS="${MAIN_CLASS:-Example}"
+MAIN_CLASS="${MAIN_CLASS:-GpsGUI}"
 main_path="${MAIN_CLASS//.//}.class"
 if [[ ! -f "$BUILD_DIR/$main_path" ]]; then
     echo "Main class is not compiled: $MAIN_CLASS" >&2

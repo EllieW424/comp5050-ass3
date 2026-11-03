@@ -15,8 +15,8 @@ export HAMCREST_JAR=/path/to/hamcrest-core.jar
 ./scripts/run.sh
 ```
 
-`run.sh` currently launches the course `Example`; select a compiled entry point with `MAIN_CLASS=...`.
+`run.sh` launches `GpsGUI`; use `MAIN_CLASS=Example ./scripts/run.sh` for the course example.
 
 ## Done
 
-Added GPS models and merged streams; tested ten altitude-free tracker positions.
+Added GPS models, merged streams, ten altitude-free tracker positions, and the Swing dashboard layout.
