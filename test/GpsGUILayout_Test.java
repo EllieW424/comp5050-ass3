@@ -10,6 +10,7 @@ import java.awt.Rectangle;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.swing.JLabel;
@@ -80,6 +81,46 @@ public class GpsGUILayout_Test {
     }
 
     @Test
+    public void trackerTableShowsZeroOneTwoAndTenActiveSlotsWithoutAltitude()
+            throws Exception {
+        StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
+        JPanel content = createOnEventThread(new SimplifiedGpsStreams(events));
+        JTable trackerTable = (JTable) findByName(content, "tracker-table");
+
+        assertEquals(10, trackerTable.getRowCount());
+        assertEquals(3, trackerTable.getColumnCount());
+        assertEquals("Tracker", trackerTable.getColumnName(0));
+        assertEquals("Latitude", trackerTable.getColumnName(1));
+        assertEquals("Longitude", trackerTable.getColumnName(2));
+        for (int row = 0; row < trackerTable.getRowCount(); row++) {
+            assertEquals("-", trackerTable.getValueAt(row, 1));
+            assertEquals("-", trackerTable.getValueAt(row, 2));
+        }
+
+        sendEvent(events, "Tracker0", 0.5, 1.5, 500.0);
+        assertEquals("0.5", trackerTable.getValueAt(0, 1));
+        assertEquals("1.5", trackerTable.getValueAt(0, 2));
+        assertEquals("-", trackerTable.getValueAt(1, 1));
+        assertEquals("-", trackerTable.getValueAt(2, 1));
+
+        sendEvent(events, "Tracker1", 1.5, 2.5, 900.0);
+        assertEquals("1.5", trackerTable.getValueAt(1, 1));
+        assertEquals("-", trackerTable.getValueAt(2, 1));
+        for (int tracker = 2; tracker < SimplifiedGpsStreams.TRACKER_COUNT; tracker++) {
+            events.send(ReceivedGpsEvent.from(new GpsEvent(
+                    "Tracker" + tracker, tracker + 0.5, tracker + 1.5, 1000.0 + tracker),
+                    tracker));
+        }
+        flushEventThread();
+
+        for (int tracker = 0; tracker < SimplifiedGpsStreams.TRACKER_COUNT; tracker++) {
+            assertEquals("Tracker" + tracker, trackerTable.getValueAt(tracker, 0));
+            assertEquals(Double.toString(tracker + 0.5), trackerTable.getValueAt(tracker, 1));
+            assertEquals(Double.toString(tracker + 1.5), trackerTable.getValueAt(tracker, 2));
+        }
+    }
+
+    @Test
     public void distanceTableTracksFilteredDistanceCellsForTheMatchingTracker()
             throws Exception {
         StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
@@ -107,13 +148,43 @@ public class GpsGUILayout_Test {
         sendEvent(events, "Tracker7", 15.0, 42.0, 101.0);
         assertEquals("1", distanceTable.getValueAt(7, 1));
 
-        for (int index = 0; index < 64; index++) {
+        for (int index = 0; index < 512; index++) {
             events.send(ReceivedGpsEvent.from(
                     new GpsEvent("Tracker7", 15.0, 42.0, 102.0 + index), 0L));
         }
         flushEventThread();
         assertTrue(Long.parseLong(distanceTable.getValueAt(7, 1).toString()) > 1L);
         assertEquals("No data", distanceTable.getValueAt(6, 1));
+    }
+
+    @Test
+    public void latestEventDisplaysReplaceEventsAndClearAfterTheSwingTimeout()
+            throws Exception {
+        StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
+        JPanel content = createOnEventThread(new SimplifiedGpsStreams(events), events);
+        STextArea mostRecent = (STextArea) findByName(content, "most-recent-event-text");
+        STextArea filtered = (STextArea) findByName(content, "filtered-event-text");
+
+        sendEvent(events, "Tracker2", 1.0, 2.0, 3.0);
+        assertEquals("Tracker2,1.0,2.0,3.0", mostRecent.getText());
+        assertEquals(mostRecent.getText(), filtered.getText());
+
+        sendEvent(events, "Tracker9", 4.0, 5.0, 6.0);
+        assertEquals("Tracker9,4.0,5.0,6.0", mostRecent.getText());
+        assertEquals(mostRecent.getText(), filtered.getText());
+
+        Thread.sleep(2_200L);
+        sendEvent(events, "Tracker9", 7.0, 8.0, 9.0);
+        assertEquals("Tracker9,7.0,8.0,9.0", mostRecent.getText());
+        assertEquals(mostRecent.getText(), filtered.getText());
+
+        Thread.sleep(1_000L);
+        flushEventThread();
+        assertEquals("Tracker9,7.0,8.0,9.0", mostRecent.getText());
+        assertEquals("Tracker9,7.0,8.0,9.0", filtered.getText());
+
+        awaitText(mostRecent, "", 2_500L);
+        awaitText(filtered, "", 500L);
     }
 
     @Test
@@ -184,6 +255,77 @@ public class GpsGUILayout_Test {
     }
 
     @Test
+    public void latitudeLongitudeAndCombinedFiltersAreReflectedInTheGui() throws Exception {
+        StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
+        JPanel content = createOnEventThread(new SimplifiedGpsStreams(events), events);
+        STextField minimumLatitude = (STextField) findByName(content,
+                "latitude-minimum-input");
+        STextField maximumLatitude = (STextField) findByName(content,
+                "latitude-maximum-input");
+        SButton setLatitude = (SButton) findByName(content, "set-latitude-bounds");
+        STextField minimumLongitude = (STextField) findByName(content,
+                "longitude-minimum-input");
+        STextField maximumLongitude = (STextField) findByName(content,
+                "longitude-maximum-input");
+        SButton setLongitude = (SButton) findByName(content, "set-longitude-bounds");
+        STextArea mostRecent = (STextArea) findByName(content, "most-recent-event-text");
+        STextArea filtered = (STextArea) findByName(content, "filtered-event-text");
+        JLabel latitudeRange = (JLabel) findByName(content, "latitude-current-range");
+        JLabel longitudeRange = (JLabel) findByName(content, "longitude-current-range");
+
+        setBounds(minimumLatitude, maximumLatitude, setLatitude, "10", "20");
+        sendEvent(events, "Tracker0", 15.0, 100.0);
+        assertEquals("Tracker0,15.0,100.0,100.0", filtered.getText());
+        sendEvent(events, "Tracker1", 25.0, 35.0);
+        assertEquals("Tracker0,15.0,100.0,100.0", filtered.getText());
+
+        setBounds(minimumLatitude, maximumLatitude, setLatitude, "", "");
+        sendEvent(events, "Tracker2", 85.0, 35.0);
+        assertEquals("Tracker2,85.0,35.0,100.0", filtered.getText());
+
+        setBounds(minimumLongitude, maximumLongitude, setLongitude, "30", "40");
+        sendEvent(events, "Tracker3", 85.0, 35.0);
+        assertEquals("Tracker3,85.0,35.0,100.0", filtered.getText());
+        sendEvent(events, "Tracker4", 85.0, 50.0);
+        assertEquals("Tracker3,85.0,35.0,100.0", filtered.getText());
+
+        setBounds(minimumLatitude, maximumLatitude, setLatitude, "10", "20");
+        sendEvent(events, "Tracker5", 15.0, 35.0);
+        assertEquals("Tracker5,15.0,35.0,100.0", filtered.getText());
+        sendEvent(events, "Tracker6", 15.0, 50.0);
+        assertEquals("Tracker5,15.0,35.0,100.0", filtered.getText());
+        sendEvent(events, "Tracker7", 25.0, 35.0);
+
+        assertEquals("Latitude range: 10.0 to 20.0", latitudeRange.getText());
+        assertEquals("Longitude range: 30.0 to 40.0", longitudeRange.getText());
+        assertEquals("Tracker7,25.0,35.0,100.0", mostRecent.getText());
+        assertEquals("Tracker5,15.0,35.0,100.0", filtered.getText());
+    }
+
+    @Test
+    public void distanceTableDisplaysIndependentFiveMinuteWindowsForEachTracker()
+            throws Exception {
+        StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
+        JPanel content = createOnEventThread(new SimplifiedGpsStreams(events), events);
+        JTable distanceTable = (JTable) findByName(content, "distance-table");
+        long boundary = DistanceWindow.WINDOW_NANOS;
+
+        sendEventAt(events, "Tracker0", 0.0, 0.0, 0.0, 0L);
+        sendEventAt(events, "Tracker1", 0.0, 0.0, 0.0, 0L);
+        sendEventAt(events, "Tracker0", 0.0, 1.0, 0.0, boundary);
+        sendEventAt(events, "Tracker1", 0.0, 2.0, 0.0, boundary);
+
+        long trackerZeroDistance = Long.parseLong(distanceTable.getValueAt(0, 1).toString());
+        long trackerOneDistance = Long.parseLong(distanceTable.getValueAt(1, 1).toString());
+        assertTrue(trackerZeroDistance > 0L);
+        assertTrue(trackerOneDistance > trackerZeroDistance);
+
+        sendEventAt(events, "Tracker0", 0.0, 1.0, 0.0, boundary + 1L);
+        assertEquals("0", distanceTable.getValueAt(0, 1));
+        assertEquals(Long.toString(trackerOneDistance), distanceTable.getValueAt(1, 1));
+    }
+
+    @Test
     public void sectionLayoutRemainsDistinctAtMinimumAndDesktopSizes() throws Exception {
         StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
         JPanel content = createOnEventThread(new SimplifiedGpsStreams(events));
@@ -212,12 +354,41 @@ public class GpsGUILayout_Test {
     private static void setLatitudeBounds(STextField minimum, STextField maximum,
                                           SButton set, String lower, String upper)
             throws InterruptedException, InvocationTargetException {
+        setBounds(minimum, maximum, set, lower, upper);
+    }
+
+    private static void setBounds(STextField minimum, STextField maximum,
+                                  SButton set, String lower, String upper)
+            throws InterruptedException, InvocationTargetException {
         SwingUtilities.invokeAndWait(() -> {
             minimum.setText(lower);
             maximum.setText(upper);
         });
         SwingUtilities.invokeAndWait(set::doClick);
         flushEventThread();
+    }
+
+    private static void sendEventAt(StreamSink<ReceivedGpsEvent> events, String tracker,
+                                    double latitude, double longitude, double altitudeFeet,
+                                    long receivedAtNanos)
+            throws InterruptedException, InvocationTargetException {
+        events.send(ReceivedGpsEvent.from(new GpsEvent(
+                tracker, latitude, longitude, altitudeFeet), receivedAtNanos));
+        flushEventThread();
+    }
+
+    private static void awaitText(STextArea textArea, String expected, long timeoutMillis)
+            throws InterruptedException, InvocationTargetException {
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        AtomicReference<String> actual = new AtomicReference<>();
+        do {
+            SwingUtilities.invokeAndWait(() -> actual.set(textArea.getText()));
+            if (expected.equals(actual.get())) {
+                return;
+            }
+            Thread.sleep(20L);
+        } while (System.nanoTime() < deadlineNanos);
+        assertEquals("Timed out waiting for event display text", expected, actual.get());
     }
 
     private static void sendEvent(StreamSink<ReceivedGpsEvent> events, String tracker,
