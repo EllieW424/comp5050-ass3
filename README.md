@@ -19,4 +19,4 @@ export HAMCREST_JAR=/path/to/hamcrest-core.jar
 
 ## Done
 
-Added validated GPS models, merged course GPS streams, and ten reactive altitude-free tracker positions.
+Added GPS models and merged streams; tested ten altitude-free tracker positions.
