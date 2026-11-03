@@ -17,6 +17,11 @@ public final class SimplifiedGps {
         return new SimplifiedGps(event.name, event.latitude, event.longitude);
     }
 
+    public static SimplifiedGps from(ReceivedGpsEvent event) {
+        Objects.requireNonNull(event, "event");
+        return new SimplifiedGps(event.getTracker(), event.getLatitude(), event.getLongitude());
+    }
+
     public String getTracker() {
         return tracker;
     }
