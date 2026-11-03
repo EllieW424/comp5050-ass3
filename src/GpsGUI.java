@@ -17,6 +17,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.UIManager;
 import javax.swing.WindowConstants;
 import javax.swing.border.TitledBorder;
@@ -27,6 +28,7 @@ import javax.swing.table.DefaultTableModel;
 import nz.sodium.Cell;
 import nz.sodium.Listener;
 import nz.sodium.Operational;
+import nz.sodium.StreamSink;
 import swidgets.SButton;
 import swidgets.STextArea;
 import swidgets.STextField;
@@ -42,9 +44,18 @@ public final class GpsGUI {
     private static final Color TABLE_HEADER = new Color(232, 239, 235);
 
     private final SimplifiedGpsStreams positions;
+    private final StreamSink<Long> timeoutTicks;
+    private final LatestEventModel latestEvents;
+    private final List<Listener> listeners = new ArrayList<>();
+    private Timer latestEventTimer;
 
     private GpsGUI(GpsServiceAdapter adapter) {
         this.positions = new SimplifiedGpsStreams(adapter.events());
+        this.timeoutTicks = new StreamSink<>();
+        this.latestEvents = new LatestEventModel(adapter.events(), timeoutTicks);
+        listeners.add(latestEvents.timeoutRequests().listen(this::restartLatestEventTimer));
+        latestEvents.currentTimeout().sample()
+                .ifPresent(this::restartLatestEventTimer);
     }
 
     public static void main(String[] args) {
@@ -53,6 +64,16 @@ public final class GpsGUI {
     }
 
     static JPanel createContent(SimplifiedGpsStreams positions) {
+        return createContent(positions, new Cell<>(Optional.empty()), new ArrayList<>());
+    }
+
+    private JPanel createDashboard() {
+        return createContent(positions, latestEvents.latestEvent(), listeners);
+    }
+
+    private static JPanel createContent(SimplifiedGpsStreams positions,
+                                        Cell<Optional<String>> latestEvent,
+                                        List<Listener> listeners) {
         JPanel shell = new JPanel(new BorderLayout(0, 14));
         shell.setName("gps-dashboard");
         shell.setBackground(BACKGROUND);
@@ -81,7 +102,8 @@ public final class GpsGUI {
         constraints.weightx = 0.6;
         constraints.weighty = 0.21;
         constraints.insets = new Insets(0, 0, 12, 12);
-        dashboard.add(createEventSection("Most Recent Event", "most-recent-event"), constraints);
+        dashboard.add(createEventSection("Most Recent Event", "most-recent-event",
+                latestEvent, listeners), constraints);
 
         constraints.gridx = 1;
         constraints.gridy = 1;
@@ -97,7 +119,8 @@ public final class GpsGUI {
         constraints.weightx = 0.6;
         constraints.weighty = 0.21;
         constraints.insets = new Insets(0, 0, 0, 12);
-        dashboard.add(createEventSection("Filtered Event", "filtered-event"), constraints);
+        dashboard.add(createEventSection("Filtered Event", "filtered-event", null, listeners),
+                constraints);
 
         JScrollPane viewport = new JScrollPane(dashboard,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
@@ -113,7 +136,7 @@ public final class GpsGUI {
         JFrame frame = new JFrame("GPS Tracker Monitor");
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         frame.setMinimumSize(new Dimension(960, 680));
-        frame.setContentPane(createContent(positions));
+        frame.setContentPane(createDashboard());
         frame.setSize(1200, 900);
         frame.setLocationByPlatform(true);
         frame.setVisible(true);
@@ -228,9 +251,12 @@ public final class GpsGUI {
         form.add(component, constraints);
     }
 
-    private static JPanel createEventSection(String title, String name) {
+    private static JPanel createEventSection(String title, String name,
+                                             Cell<Optional<String>> eventValue,
+                                             List<Listener> listeners) {
         JPanel section = createSection(title, name + "-section");
-        STextArea event = new STextArea("Waiting for GPS data", 2, 30);
+        STextArea event = new STextArea(
+                eventValue == null ? "Waiting for GPS data" : "", 2, 30);
         event.setName(name + "-text");
         event.setEditable(false);
         event.setLineWrap(true);
@@ -239,8 +265,25 @@ public final class GpsGUI {
         event.setBackground(new Color(249, 251, 249));
         event.setFont(event.getFont().deriveFont(14f));
         event.getAccessibleContext().setAccessibleName(title);
+        if (eventValue != null) {
+            event.setText(eventValue.sample().orElse(""));
+            listeners.add(Operational.updates(eventValue).listen(value ->
+                    SwingUtilities.invokeLater(() -> event.setText(value.orElse("")))));
+        }
         section.add(event, BorderLayout.CENTER);
         return section;
+    }
+
+    private void restartLatestEventTimer(LatestEventModel.TimeoutRequest request) {
+        SwingUtilities.invokeLater(() -> {
+            if (latestEventTimer != null) {
+                latestEventTimer.stop();
+            }
+            latestEventTimer = new Timer(LatestEventModel.DISPLAY_TIMEOUT_MILLIS,
+                    event -> timeoutTicks.send(request.getGeneration()));
+            latestEventTimer.setRepeats(false);
+            latestEventTimer.start();
+        });
     }
 
     private static JPanel createDistanceSection() {

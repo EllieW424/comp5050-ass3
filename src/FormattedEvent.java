@@ -24,6 +24,11 @@ public final class FormattedEvent {
         return new FormattedEvent(tracker, event.latitude, event.longitude, event.altitude);
     }
 
+    public static FormattedEvent from(ReceivedGpsEvent event) {
+        Objects.requireNonNull(event, "event");
+        return from(event.toGpsEvent());
+    }
+
     public String format() {
         return tracker + "," + Double.toString(latitude) + ","
                 + Double.toString(longitude) + "," + Double.toString(altitudeFeet);
