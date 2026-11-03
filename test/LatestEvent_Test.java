@@ -56,6 +56,40 @@ public class LatestEvent_Test {
         assertFalse(fixture.model.latestEvent().sample().isPresent());
     }
 
+    @Test
+    public void timeoutTicksForOneDisplayDoNotClearTheOtherDisplay() {
+        StreamSink<ReceivedGpsEvent> recentEvents = new StreamSink<>();
+        StreamSink<ReceivedGpsEvent> filteredEvents = new StreamSink<>();
+        StreamSink<Long> recentTicks = new StreamSink<>();
+        StreamSink<Long> filteredTicks = new StreamSink<>();
+        LatestEventModel recent = new LatestEventModel(recentEvents, recentTicks);
+        LatestEventModel filtered = new LatestEventModel(filteredEvents, filteredTicks);
+        List<LatestEventModel.TimeoutRequest> recentRequests = new ArrayList<>();
+        List<LatestEventModel.TimeoutRequest> filteredRequests = new ArrayList<>();
+        Listener recentListener = recent.timeoutRequests().listen(recentRequests::add);
+        Listener filteredListener = filtered.timeoutRequests().listen(filteredRequests::add);
+
+        recentEvents.send(event("Tracker1", 1.0, 2.0, 3.0));
+        filteredEvents.send(event("Tracker2", 4.0, 5.0, 6.0));
+        assertEquals(Optional.of("Tracker1,1.0,2.0,3.0"), recent.latestEvent().sample());
+        assertEquals(Optional.of("Tracker2,4.0,5.0,6.0"), filtered.latestEvent().sample());
+
+        recentTicks.send(recentRequests.get(0).getGeneration());
+        assertFalse(recent.latestEvent().sample().isPresent());
+        assertEquals(Optional.of("Tracker2,4.0,5.0,6.0"), filtered.latestEvent().sample());
+
+        filteredTicks.send(filteredRequests.get(0).getGeneration());
+        assertFalse(filtered.latestEvent().sample().isPresent());
+        recentListener.unlisten();
+        filteredListener.unlisten();
+    }
+
+    private static ReceivedGpsEvent event(String tracker, double latitude, double longitude,
+                                          double altitudeFeet) {
+        return ReceivedGpsEvent.from(
+                new GpsEvent(tracker, latitude, longitude, altitudeFeet), 0L);
+    }
+
     private static void assertEvent(Fixture fixture, String expected) {
         assertEquals(Optional.of(expected), fixture.model.latestEvent().sample());
     }

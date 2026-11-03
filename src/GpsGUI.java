@@ -46,19 +46,11 @@ public final class GpsGUI {
 
     private final SimplifiedGpsStreams positions;
     private final Stream<ReceivedGpsEvent> events;
-    private final StreamSink<Long> timeoutTicks;
-    private final LatestEventModel latestEvents;
     private final List<Listener> listeners = new ArrayList<>();
-    private Timer latestEventTimer;
 
     private GpsGUI(GpsServiceAdapter adapter) {
         this.events = adapter.events();
         this.positions = new SimplifiedGpsStreams(events);
-        this.timeoutTicks = new StreamSink<>();
-        this.latestEvents = new LatestEventModel(events, timeoutTicks);
-        listeners.add(latestEvents.timeoutRequests().listen(this::restartLatestEventTimer));
-        latestEvents.currentTimeout().sample()
-                .ifPresent(this::restartLatestEventTimer);
     }
 
     public static void main(String[] args) {
@@ -67,17 +59,20 @@ public final class GpsGUI {
     }
 
     static JPanel createContent(SimplifiedGpsStreams positions) {
-        return createContent(positions, new Stream<>(), new Cell<>(Optional.empty()),
-                new ArrayList<>());
+        return createContent(positions, new Stream<>(), new ArrayList<>());
     }
 
     private JPanel createDashboard() {
-        return createContent(positions, events, latestEvents.latestEvent(), listeners);
+        return createContent(positions, events, listeners);
+    }
+
+    static JPanel createContent(SimplifiedGpsStreams positions,
+                                Stream<ReceivedGpsEvent> events) {
+        return createContent(positions, events, new ArrayList<>());
     }
 
     private static JPanel createContent(SimplifiedGpsStreams positions,
                                         Stream<ReceivedGpsEvent> events,
-                                        Cell<Optional<String>> latestEvent,
                                         List<Listener> listeners) {
         JPanel shell = new JPanel(new BorderLayout(0, 14));
         shell.setName("gps-dashboard");
@@ -100,15 +95,17 @@ public final class GpsGUI {
         constraints.gridx = 1;
         constraints.weightx = 0.4;
         constraints.insets = new Insets(0, 0, 12, 0);
-        dashboard.add(createFilterSection(events, listeners), constraints);
+        FilterSection filterSection = createFilterSection(events, listeners);
+        dashboard.add(filterSection.panel, constraints);
 
         constraints.gridx = 0;
         constraints.gridy = 1;
         constraints.weightx = 0.6;
         constraints.weighty = 0.21;
         constraints.insets = new Insets(0, 0, 12, 12);
-        dashboard.add(createEventSection("Most Recent Event", "most-recent-event",
-                latestEvent, listeners), constraints);
+        EventDisplay mostRecent = new EventDisplay("Most Recent Event", "most-recent-event",
+                events, listeners);
+        dashboard.add(mostRecent.panel, constraints);
 
         constraints.gridx = 1;
         constraints.gridy = 1;
@@ -124,8 +121,9 @@ public final class GpsGUI {
         constraints.weightx = 0.6;
         constraints.weighty = 0.21;
         constraints.insets = new Insets(0, 0, 0, 12);
-        dashboard.add(createEventSection("Filtered Event", "filtered-event", null, listeners),
-                constraints);
+        EventDisplay filtered = new EventDisplay("Filtered Event", "filtered-event",
+                filterSection.model.filteredEvents(), listeners);
+        dashboard.add(filtered.panel, constraints);
 
         JScrollPane viewport = new JScrollPane(dashboard,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
@@ -183,8 +181,8 @@ public final class GpsGUI {
         return section;
     }
 
-    private static JPanel createFilterSection(Stream<ReceivedGpsEvent> events,
-                                              List<Listener> listeners) {
+    private static FilterSection createFilterSection(Stream<ReceivedGpsEvent> events,
+                                                     List<Listener> listeners) {
         JPanel section = createSection("Latitude/Longitude Filter", "filter-section");
         JPanel form = new JPanel(new GridBagLayout());
         form.setOpaque(false);
@@ -246,7 +244,7 @@ public final class GpsGUI {
                 })));
 
         section.add(form, BorderLayout.CENTER);
-        return section;
+        return new FilterSection(section, model);
     }
 
     private static STextField createFilterInput(String name, String accessibleName,
@@ -345,39 +343,56 @@ public final class GpsGUI {
         form.add(component, constraints);
     }
 
-    private static JPanel createEventSection(String title, String name,
-                                             Cell<Optional<String>> eventValue,
-                                             List<Listener> listeners) {
-        JPanel section = createSection(title, name + "-section");
-        STextArea event = new STextArea(
-                eventValue == null ? "Waiting for GPS data" : "", 2, 30);
-        event.setName(name + "-text");
-        event.setEditable(false);
-        event.setLineWrap(true);
-        event.setWrapStyleWord(true);
-        event.setForeground(TEXT);
-        event.setBackground(new Color(249, 251, 249));
-        event.setFont(event.getFont().deriveFont(14f));
-        event.getAccessibleContext().setAccessibleName(title);
-        if (eventValue != null) {
-            event.setText(eventValue.sample().orElse(""));
-            listeners.add(Operational.updates(eventValue).listen(value ->
-                    SwingUtilities.invokeLater(() -> event.setText(value.orElse("")))));
+    private static final class FilterSection {
+        private final JPanel panel;
+        private final GpsFilterModel model;
+
+        private FilterSection(JPanel panel, GpsFilterModel model) {
+            this.panel = panel;
+            this.model = model;
         }
-        section.add(event, BorderLayout.CENTER);
-        return section;
     }
 
-    private void restartLatestEventTimer(LatestEventModel.TimeoutRequest request) {
-        SwingUtilities.invokeLater(() -> {
-            if (latestEventTimer != null) {
-                latestEventTimer.stop();
-            }
-            latestEventTimer = new Timer(LatestEventModel.DISPLAY_TIMEOUT_MILLIS,
-                    event -> timeoutTicks.send(request.getGeneration()));
-            latestEventTimer.setRepeats(false);
-            latestEventTimer.start();
-        });
+    private static final class EventDisplay {
+        private final JPanel panel;
+        private final StreamSink<Long> timeoutTicks = new StreamSink<>();
+        private Timer timer;
+
+        private EventDisplay(String title, String name, Stream<ReceivedGpsEvent> events,
+                             List<Listener> listeners) {
+            LatestEventModel model = new LatestEventModel(events, timeoutTicks);
+            panel = createSection(title, name + "-section");
+            STextArea text = new STextArea("", 2, 30);
+            text.setName(name + "-text");
+            text.setEditable(false);
+            text.setLineWrap(true);
+            text.setWrapStyleWord(true);
+            text.setForeground(TEXT);
+            text.setBackground(new Color(249, 251, 249));
+            text.setFont(text.getFont().deriveFont(14f));
+            text.getAccessibleContext().setAccessibleName(title);
+            text.getAccessibleContext().setAccessibleDescription(
+                    "Most recent GPS event accepted by this display.");
+            panel.add(text, BorderLayout.CENTER);
+
+            text.setText(model.latestEvent().sample().orElse(""));
+            listeners.add(Operational.updates(model.latestEvent()).listen(value ->
+                    SwingUtilities.invokeLater(() -> text.setText(value.orElse("")))));
+            listeners.add(model.timeoutRequests().listen(this::restartTimer));
+            model.currentTimeout().sample().ifPresent(this::restartTimer);
+        }
+
+        private void restartTimer(LatestEventModel.TimeoutRequest request) {
+            SwingUtilities.invokeLater(() -> {
+                if (timer != null) {
+                    timer.stop();
+                }
+                timer = new Timer(LatestEventModel.DISPLAY_TIMEOUT_MILLIS,
+                        event -> timeoutTicks.send(request.getGeneration()));
+                timer.setRepeats(false);
+                timer.start();
+            });
+        }
     }
 
     private static JPanel createDistanceSection() {

@@ -120,6 +120,33 @@ public class GpsGUILayout_Test {
     }
 
     @Test
+    public void filteredEventDisplayTracksOnlyEventsInsideTheCurrentBounds() throws Exception {
+        StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
+        JPanel content = createOnEventThread(new SimplifiedGpsStreams(events), events);
+        STextField minimumLatitude = (STextField) findByName(content,
+                "latitude-minimum-input");
+        STextField maximumLatitude = (STextField) findByName(content,
+                "latitude-maximum-input");
+        SButton setLatitude = (SButton) findByName(content, "set-latitude-bounds");
+        STextArea mostRecent = (STextArea) findByName(content, "most-recent-event-text");
+        STextArea filtered = (STextArea) findByName(content, "filtered-event-text");
+
+        setLatitudeBounds(minimumLatitude, maximumLatitude, setLatitude, "10", "20");
+        sendEvent(events, "Inside", 15.0, 42.0);
+        assertEquals("Inside,15.0,42.0,100.0", mostRecent.getText());
+        assertEquals(mostRecent.getText(), filtered.getText());
+
+        sendEvent(events, "Outside", 21.0, 42.0);
+        assertEquals("Outside,21.0,42.0,100.0", mostRecent.getText());
+        assertEquals("Inside,15.0,42.0,100.0", filtered.getText());
+
+        setLatitudeBounds(minimumLatitude, maximumLatitude, setLatitude, "20", "30");
+        sendEvent(events, "NewRange", 25.0, 42.0);
+        assertEquals("NewRange,25.0,42.0,100.0", mostRecent.getText());
+        assertEquals(mostRecent.getText(), filtered.getText());
+    }
+
+    @Test
     public void sectionLayoutRemainsDistinctAtMinimumAndDesktopSizes() throws Exception {
         StreamSink<ReceivedGpsEvent> events = new StreamSink<>();
         JPanel content = createOnEventThread(new SimplifiedGpsStreams(events));
@@ -135,6 +162,38 @@ public class GpsGUILayout_Test {
         AtomicReference<JPanel> result = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> result.set(GpsGUI.createContent(positions)));
         return result.get();
+    }
+
+    private static JPanel createOnEventThread(SimplifiedGpsStreams positions,
+                                              StreamSink<ReceivedGpsEvent> events)
+            throws InterruptedException, InvocationTargetException {
+        AtomicReference<JPanel> result = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> result.set(GpsGUI.createContent(positions, events)));
+        return result.get();
+    }
+
+    private static void setLatitudeBounds(STextField minimum, STextField maximum,
+                                          SButton set, String lower, String upper)
+            throws InterruptedException, InvocationTargetException {
+        SwingUtilities.invokeAndWait(() -> {
+            minimum.setText(lower);
+            maximum.setText(upper);
+        });
+        SwingUtilities.invokeAndWait(set::doClick);
+        flushEventThread();
+    }
+
+    private static void sendEvent(StreamSink<ReceivedGpsEvent> events, String tracker,
+                                  double latitude, double longitude)
+            throws InterruptedException, InvocationTargetException {
+        events.send(ReceivedGpsEvent.from(
+                new GpsEvent(tracker, latitude, longitude, 100.0), 0L));
+        flushEventThread();
+    }
+
+    private static void flushEventThread()
+            throws InterruptedException, InvocationTargetException {
+        SwingUtilities.invokeAndWait(() -> { });
     }
 
     private static void assertSectionsDoNotOverlap(JPanel content, JPanel dashboard,
