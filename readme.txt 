@@ -1,0 +1,28 @@
+COMP5050 Programming Assignment 3 - GPS Tracker Monitor
+
+Student ID: a1957750
+
+Requirements
+- JDK 11
+- Sodium, Swidget, JUnit 4 and Hamcrest JAR files
+- The unmodified course-provided Java files and gps.dat
+
+Setup
+Set the following paths before compiling, testing or running:
+
+export PROVIDED_DIR=/path/to/course-provided-files
+export SODIUM_JAR=/path/to/sodium.jar
+export SWIDGET_JAR=/path/to/swidget.jar
+export JUNIT_JAR=/path/to/junit.jar
+export HAMCREST_JAR=/path/to/hamcrest-core.jar
+
+Commands
+Compile: ./scripts/compile.sh
+Test:    ./scripts/test.sh
+Run:     ./scripts/run.sh
+
+The run script launches GpsGUI. PROVIDED_DIR must contain gps.dat because the
+application reads it from the working directory. Course-provided files and
+library JAR files are not included in this repository.
+
+Testing details and test coverage are documented in testing.pdf.
